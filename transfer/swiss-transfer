@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# swiss-transfer CLI wrapper — upload/download files via swiss-transfer.ch
+# Requires: curl, jq
+# Usage:
+#   swiss-transfer upload <file> [--password PASS]
+#   swiss-transfer download <transfer-id> [output-file]
+
+set -euo pipefail
+
+API="https://www.swiss-transfer.ch/api/v1"
+
+usage() {
+    cat <<'EOF'
+swiss-transfer — Swiss Transfer CLI wrapper
+
+Usage:
+  swiss-transfer upload <file> [--password PASS]   Upload file (encrypted), print download URL
+  swiss-transfer download <transfer-id> [out]      Download file by transfer ID
+  swiss-transfer help                              Show this help
+
+Examples:
+  swiss-transfer upload bigfile.zip
+  swiss-transfer upload secret.zip --password mypass
+  swiss-transfer download abc123-def456
+  swiss-transfer download abc123-def456 myfile.zip
+
+Notes:
+  - Free tier: 10 GB per transfer, 30 days retention
+  - Files are end-to-end encrypted (password optional)
+  - Transfer ID is the UUID from the share URL: https://www.swiss-transfer.ch/download/abc123-def456
+EOF
+}
+
+upload() {
+    local file="${1:-}"
+    local password=""
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --password) password="$2"; shift 2 ;;
+            *) echo "Unknown option: $1" >&2; exit 1 ;;
+        esac
+    done
+    [[ -f "$file" ]] || { echo "File not found: $file" >&2; exit 1; }
+
+    local name=$(basename "$file")
+    local size=$(stat -c%s "$file")
+    echo "Preparing upload: $name ($size bytes)..." >&2
+
+    # Step 1: Create transfer
+    local create_payload=$(jq -n \
+        --arg name "$name" \
+        --arg size "$size" \
+        --arg pass "$password" \
+        '{name: $name, size: ($size|tonumber), password: ($pass | if . == "" then null else . end)}')
+    local create_resp=$(curl -s -X POST "$API/transfers" \
+        -H "Content-Type: application/json" \
+        -d "$create_payload")
+    local transfer_id=$(echo "$create_resp" | jq -r '.transfer.id')
+    local upload_url=$(echo "$create_resp" | jq -r '.transfer.uploadUrl')
+    [[ "$transfer_id" != "null" ]] || { echo "Failed to create transfer" >&2; echo "$create_resp" >&2; exit 1; }
+
+    # Step 2: Upload file
+    echo "Uploading..." >&2
+    curl -s --progress-bar -X PUT "$upload_url" \
+        -H "Content-Type: application/octet-stream" \
+        --data-binary @"$file" >/dev/null
+
+    # Step 3: Complete transfer
+    curl -s -X POST "$API/transfers/$transfer_id/complete" >/dev/null
+
+    echo "https://www.swiss-transfer.ch/download/$transfer_id"
+    [[ -n "$password" ]] && echo "Password: $password"
+}
+
+download() {
+    local transfer_id="${1:-}"
+    local out="${2:-}"
+    [[ -n "$transfer_id" ]] || { echo "Usage: swiss-transfer download <transfer-id> [output-file]" >&2; exit 1; }
+
+    # Get download info
+    local info=$(curl -s "$API/transfers/$transfer_id")
+    local name=$(echo "$info" | jq -r '.transfer.name')
+    local download_url=$(echo "$info" | jq -r '.transfer.downloadUrl')
+    local has_password=$(echo "$info" | jq -r '.transfer.hasPassword')
+
+    if [[ "$has_password" == "true" ]]; then
+        read -rsp "Password: " password
+        echo
+        download_url="${download_url}?password=$(printf %s "$password" | jq -sRr @uri)"
+    fi
+
+    [[ -z "$out" ]] && out="$name"
+    echo "Downloading $name to $out..." >&2
+    curl -L --progress-bar -o "$out" "$download_url"
+    echo "Saved to $out"
+}
+
+case "${1:-help}" in
+    upload)   upload "${@:2}" ;;
+    download) download "${2:-}" "${3:-}" ;;
+    *)        usage ;;
+esac
