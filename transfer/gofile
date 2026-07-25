@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# gofile — Upload files to gofile.io (unlimited, no expiry, no account)
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+gofile — Upload files to gofile.io
+
+Usage:
+  gofile <file>              Upload file, print download URL
+  gofile --help              Show this help
+
+Examples:
+  gofile bigfile.zip
+  # https://gofile.io/d/abc123
+
+Notes:
+  - No size limits
+  - No expiry
+  - No account required
+  - Files stored on gofile.io servers
+EOF
+}
+
+file="${1:-}"
+[[ -z "$file" ]] && { usage; exit 1; }
+[[ "$file" == "--help" || "$file" == "-h" ]] && { usage; exit 0; }
+[[ -f "$file" ]] || { echo "File not found: $file" >&2; exit 1; }
+
+filename=$(basename "$file")
+echo "Uploading $filename..." >&2
+
+# Upload to gofile.io
+response=$(curl -s -L -X POST https://store1.gofile.io/uploadFile \
+    -F "file=@$file" \
+    -F "folderId=")
+
+# Parse response
+status=$(echo "$response" | jq -r '.status // "error"')
+if [[ "$status" != "ok" ]]; then
+    echo "Upload failed: $response" >&2
+    exit 1
+fi
+
+download_page=$(echo "$response" | jq -r '.data.downloadPage')
+echo "$download_page"

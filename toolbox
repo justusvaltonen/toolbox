@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# toolbox — Quick access to ~/toolbox utilities
+
+# Add toolbox bin to PATH if not already there
+TOOLBOX_BIN="$HOME/toolbox/transfer"
+
+case "${1:-help}" in
+    transfer|transfer.sh)
+        shift
+        exec "$TOOLBOX_BIN/transfer.sh" "$@"
+        ;;
+    swiss|swiss-transfer)
+        shift
+        exec "$TOOLBOX_BIN/swiss-transfer" "$@"
+        ;;
+    gofile)
+        shift
+        exec "$TOOLBOX_BIN/gofile" "$@"
+        ;;
+    list|ls)
+        ls -1 "$TOOLBOX_BIN"
+        ;;
+    *)
+        cat <<'EOF'
+toolbox — Quick access to ~/toolbox utilities
+
+Usage:
+  toolbox transfer <file> [options]     Upload via transfer.sh
+  toolbox swiss upload <file> [opts]    Upload via swiss-transfer.ch
+  toolbox swiss download <id> [out]     Download from swiss-transfer.ch
+  toolbox gofile <file>                 Upload via gofile.io
+  toolbox list                          List available tools
+
+Examples:
+  toolbox transfer bigfile.zip
+  toolbox transfer secret.zip --days 7
+  toolbox swiss upload data.zip
+  toolbox swiss download abc123-def456
+  toolbox gofile bigfile.zip
+EOF
+        ;;
+esac
